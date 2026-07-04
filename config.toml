@@ -4,16 +4,59 @@ config_version = "1.0.0"
 
 [menu]
 exclude_plugins = ["builtin.plugin-management"]
-manual_commands = [
-    "每日分析|/summary [今天|昨天]|生成群聊总结图片",
-    "每日分析|/mysummary [今天|昨天]|生成个人总结图片",
-    "每日分析|/mysummary @某人|查看他人个人总结（需权限）",
-    "每日60秒新闻|/get_news [image|text]|当前会话获取每日新闻",
-    "每日60秒新闻|/news|同 /get_news",
-    "每日60秒新闻|/每日新闻|同 /get_news",
-    "每日60秒新闻|/news_status|查看下次推送时间",
-    "每日60秒新闻|/push_news|管理员手动推送到配置群",
-    "群友语录|/投稿|回复图片消息投稿到群语录库",
-    "群友语录|/群友语录|随机获取一条群投稿语录",
-    "菜单插件|/菜单|显示麦麦所有功能和指令",
-]
+
+[[menu.features]]
+name = "每日分析"
+
+[[menu.features.commands]]
+trigger = "/summary [今天|昨天]"
+description = "生成群聊总结图片"
+
+[[menu.features.commands]]
+trigger = "/mysummary [今天|昨天]"
+description = "生成个人总结图片"
+
+[[menu.features.commands]]
+trigger = "/mysummary @某人"
+description = "查看他人个人总结（需权限）"
+
+[[menu.features]]
+name = "每日60秒新闻"
+
+[[menu.features.commands]]
+trigger = "/get_news [image|text]"
+description = "获取每日新闻"
+
+[[menu.features.commands]]
+trigger = "/news"
+description = "同 /get_news"
+
+[[menu.features.commands]]
+trigger = "/每日新闻"
+description = "同 /get_news"
+
+[[menu.features.commands]]
+trigger = "/news_status"
+description = "查看下次推送时间"
+
+[[menu.features.commands]]
+trigger = "/push_news"
+description = "管理员推送到配置群"
+
+[[menu.features]]
+name = "群友语录"
+
+[[menu.features.commands]]
+trigger = "/投稿"
+description = "回复图片投稿到群语录库"
+
+[[menu.features.commands]]
+trigger = "/群友语录"
+description = "随机获取一条语录"
+
+[[menu.features]]
+name = "菜单插件"
+
+[[menu.features.commands]]
+trigger = "/菜单"
+description = "显示所有功能和指令"

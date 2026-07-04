@@ -136,7 +136,12 @@ def _load_custom_commands() -> Dict[str, List[Tuple[str, str]]]:
                 data = json.load(f)
             result = {}
             for name, cmds in data.items():
-                result[name] = [(c[0], c[1]) for c in cmds]
+                result[name] = []
+                for c in cmds:
+                    if isinstance(c, list) and len(c) >= 2:
+                        result[name].append((c[0], c[1]))
+                    elif isinstance(c, list) and len(c) == 1:
+                        result[name].append((c[0], ""))
             return result
     except Exception:
         pass
@@ -150,6 +155,23 @@ def _save_custom_commands(data: Dict[str, List[Tuple[str, str]]]) -> None:
         out[name] = [[c[0], c[1]] for c in cmds]
     with open(_DATA_FILE, "w", encoding="utf-8") as f:
         json.dump(out, f, ensure_ascii=False, indent=2)
+
+
+def _features_to_dict(features: List[Any]) -> Dict[str, List[Tuple[str, str]]]:
+    """把配置里的 FeatureItem 列表转成 {name: [(cmd, desc)]} 格式"""
+    result = {}
+    for feat in features:
+        name = getattr(feat, "name", "") or ""
+        if not name:
+            continue
+        cmds = getattr(feat, "commands", []) or []
+        result[name] = []
+        for c in cmds:
+            trigger = getattr(c, "trigger", "") or ""
+            desc = getattr(c, "description", "") or ""
+            if trigger:
+                result[name].append((trigger, desc))
+    return result
 
 
 # ==================== 指令 pattern 可读化 ====================
@@ -197,19 +219,53 @@ class PluginSection(PluginConfigBase):
                                 json_schema_extra={"label": "配置版本", "disabled": True})
 
 
+class CommandItem(PluginConfigBase):
+    """一条子指令"""
+    __ui_label__ = "指令"
+    __ui_icon__ = "terminal"
+
+    trigger: str = Field(
+        default="",
+        description="命令触发词，例如 /summary",
+        json_schema_extra={"label": "命令"},
+    )
+    description: str = Field(
+        default="",
+        description="这条指令的功能说明",
+        json_schema_extra={"label": "功能描述"},
+    )
+
+
+class FeatureItem(PluginConfigBase):
+    """一个功能分组"""
+    __ui_label__ = "功能"
+    __ui_icon__ = "package"
+
+    name: str = Field(
+        default="",
+        description="功能名称，例如 每日分析",
+        json_schema_extra={"label": "功能名称"},
+    )
+    commands: List[CommandItem] = Field(
+        default_factory=list,
+        description="该功能下的所有指令",
+        json_schema_extra={"label": "指令列表"},
+    )
+
+
 class MenuSection(PluginConfigBase):
     __ui_label__ = "菜单"
     __ui_order__ = 1
 
+    features: List[FeatureItem] = Field(
+        default_factory=list,
+        description="手动配置的功能分组和指令",
+        json_schema_extra={"label": "功能列表"},
+    )
     exclude_plugins: List[str] = Field(
         default_factory=lambda: ["builtin.plugin-management"],
-        description="在菜单中隐藏的这些插件 ID",
+        description="在自动检测中隐藏的插件 ID",
         json_schema_extra={"label": "排除插件"},
-    )
-    manual_commands: List[str] = Field(
-        default_factory=list,
-        description='手动添加命令，每行格式: 插件名 | 命令 | 描述',
-        json_schema_extra={"label": "手动命令", "hint": "格式: 插件名 | /命令 | 功能描述"},
     )
 
 
@@ -342,18 +398,10 @@ class MenuPlugin(MaiBotPlugin):
             menu_items: List[Dict] = []
             total_commands = 0
 
-            # 合并 config.toml 手动命令 + commands.json 自定义命令
+            # 合并 WebUI 配置 + commands.json 自定义命令
             custom = _load_custom_commands()
-            for line in self.config.menu.manual_commands:
-                line = str(line).strip()
-                if not line:
-                    continue
-                parts = line.split("|", 2)
-                if len(parts) >= 2:
-                    name = parts[0].strip()
-                    cmd = parts[1].strip()
-                    desc = parts[2].strip() if len(parts) > 2 else ""
-                    custom.setdefault(name, []).append((cmd, desc))
+            for name, cmds in _features_to_dict(self.config.menu.features).items():
+                custom.setdefault(name, []).extend(cmds)
 
             manual = custom  # 合并后统一使用
 
