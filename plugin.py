@@ -378,3 +378,7 @@ body {{
             elif isinstance(nested, str) and nested and key != "result":
                 return nested
         return None
+
+
+def create_plugin() -> MenuPlugin:
+    return MenuPlugin()
