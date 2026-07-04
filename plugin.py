@@ -130,11 +130,15 @@ class MenuPlugin(MaiBotPlugin):
     ) -> Tuple[bool, str, bool]:
         try:
             result = await self.ctx.component.get_all_plugins()
-            if not isinstance(result, dict) or not result.get("success"):
+            # SDK 成功时自动解包返回 plugins 字典本身，失败时返回 {"success": False, "error": ...}
+            if isinstance(result, dict) and result.get("success") is False:
                 await self.ctx.send.text("获取插件列表失败了，稍后再试吧~", stream_id)
                 return True, "get_all_plugins 失败", True
+            if not isinstance(result, dict):
+                await self.ctx.send.text("获取插件列表失败了，稍后再试吧~", stream_id)
+                return True, "get_all_plugins 返回异常", True
 
-            all_plugins = result.get("plugins", {})
+            all_plugins = result  # 成功时 result 直接就是 plugins 字典
             exclude_ids = set(str(p) for p in self.config.menu.exclude_plugins)
 
             menu_items: List[Dict] = []
