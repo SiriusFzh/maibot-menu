@@ -118,6 +118,10 @@ class MenuPlugin(MaiBotPlugin):
     async def on_unload(self) -> None:
         self.ctx.logger.info("菜单插件已卸载")
 
+    async def on_config_update(self, scope: str, config_data: dict, version: str) -> None:
+        """配置热更新时不做特殊处理，配置已通过 self.config 实时生效"""
+        pass
+
     # ==================== 命令 ====================
 
     @Command("menu", description="显示麦麦所有功能和指令", pattern=r"^/菜单$")
