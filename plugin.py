@@ -125,6 +125,33 @@ _ADAPTER_PLUGINS = {"maibot-team.napcat-adapter", "maibot-team.snowluma-adapter"
 _EXCLUDE_BY_NAME = {"Hello World"}
 
 
+_DATA_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "commands.json")
+
+
+def _load_custom_commands() -> Dict[str, List[Tuple[str, str]]]:
+    """从 commands.json 加载自定义命令"""
+    try:
+        if os.path.exists(_DATA_FILE):
+            with open(_DATA_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            result = {}
+            for name, cmds in data.items():
+                result[name] = [(c[0], c[1]) for c in cmds]
+            return result
+    except Exception:
+        pass
+    return {}
+
+
+def _save_custom_commands(data: Dict[str, List[Tuple[str, str]]]) -> None:
+    """保存自定义命令到 commands.json"""
+    out = {}
+    for name, cmds in data.items():
+        out[name] = [[c[0], c[1]] for c in cmds]
+    with open(_DATA_FILE, "w", encoding="utf-8") as f:
+        json.dump(out, f, ensure_ascii=False, indent=2)
+
+
 # ==================== 指令 pattern 可读化 ====================
 
 
@@ -208,7 +235,92 @@ class MenuPlugin(MaiBotPlugin):
         """配置热更新时不做特殊处理，配置已通过 self.config 实时生效"""
         pass
 
-    # ==================== 命令 ====================
+    # ==================== 菜单管理命令 ====================
+
+    @Command("menu_add", description="添加一个功能分类", pattern=r"^/菜单添加\s+(?P<args>.+)$")
+    async def cmd_menu_add(
+        self, stream_id: str = "", group_id: str = "", **kwargs: Any
+    ) -> Tuple[bool, str, bool]:
+        args = ((kwargs.get("matched_groups") or {}).get("args") or "").strip()
+        if not args:
+            await self.ctx.send.text("用法: /菜单添加 功能名", stream_id)
+            return True, "无参数", True
+        data = _load_custom_commands()
+        if args in data:
+            await self.ctx.send.text(f"功能【{args}】已存在，用 /菜单指令 添加指令吧", stream_id)
+            return True, "已存在", True
+        data[args] = []
+        _save_custom_commands(data)
+        await self.ctx.send.text(f"已添加功能【{args}】，用 /菜单指令 给它添加指令吧", stream_id)
+        return True, f"已添加 {args}", True
+
+    @Command("menu_cmd", description="给功能添加一条指令",
+             pattern=r"^/菜单指令\s+(?P<args>.+)$")
+    async def cmd_menu_cmd(
+        self, stream_id: str = "", group_id: str = "", **kwargs: Any
+    ) -> Tuple[bool, str, bool]:
+        args = ((kwargs.get("matched_groups") or {}).get("args") or "").strip()
+        parts = args.split(None, 2)
+        if len(parts) < 2:
+            await self.ctx.send.text("用法: /菜单指令 功能名 指令 [描述]", stream_id)
+            return True, "参数不足", True
+        name = parts[0]
+        cmd = parts[1]
+        desc = parts[2] if len(parts) > 2 else ""
+        data = _load_custom_commands()
+        if name not in data:
+            await self.ctx.send.text(f"功能【{name}】不存在，先用 /菜单添加 创建", stream_id)
+            return True, "功能不存在", True
+        data[name].append((cmd, desc))
+        _save_custom_commands(data)
+        info = f"{cmd} {'— ' + desc if desc else ''}"
+        await self.ctx.send.text(f"已添加: 【{name}】{info}", stream_id)
+        return True, f"添加成功 {cmd}", True
+
+    @Command("menu_del", description="删除一个功能分类",
+             pattern=r"^/菜单删除\s+(?P<args>.+)$")
+    async def cmd_menu_del(
+        self, stream_id: str = "", group_id: str = "", **kwargs: Any
+    ) -> Tuple[bool, str, bool]:
+        args = ((kwargs.get("matched_groups") or {}).get("args") or "").strip()
+        if not args:
+            await self.ctx.send.text("用法: /菜单删除 功能名", stream_id)
+            return True, "无参数", True
+        data = _load_custom_commands()
+        if args not in data:
+            await self.ctx.send.text(f"功能【{args}】不存在", stream_id)
+            return True, "不存在", True
+        del data[args]
+        _save_custom_commands(data)
+        await self.ctx.send.text(f"已删除功能【{args}】及其所有指令", stream_id)
+        return True, f"已删除 {args}", True
+
+    @Command("menu_delcmd", description="删除一条指令",
+             pattern=r"^/菜单删指令\s+(?P<args>.+)$")
+    async def cmd_menu_delcmd(
+        self, stream_id: str = "", group_id: str = "", **kwargs: Any
+    ) -> Tuple[bool, str, bool]:
+        args = ((kwargs.get("matched_groups") or {}).get("args") or "").strip()
+        parts = args.split(None, 1)
+        if len(parts) < 2:
+            await self.ctx.send.text("用法: /菜单删指令 功能名 指令", stream_id)
+            return True, "参数不足", True
+        name = parts[0]
+        target = parts[1]
+        data = _load_custom_commands()
+        if name not in data:
+            await self.ctx.send.text(f"功能【{name}】不存在", stream_id)
+            return True, "不存在", True
+        before = len(data[name])
+        data[name] = [(c, d) for c, d in data[name] if c != target]
+        if len(data[name]) == before:
+            await self.ctx.send.text(f"未找到指令【{target}】", stream_id)
+            return True, "未找到", True
+        _save_custom_commands(data)
+        await self.ctx.send.text(f"已从【{name}】中删除指令【{target}】", stream_id)
+        return True, f"已删除 {target}", True
+
+    # ==================== 菜单展示命令 ====================
 
     @Command("menu", description="显示麦麦所有功能和指令", pattern=r"^/菜单$")
     async def cmd_menu(
@@ -230,8 +342,8 @@ class MenuPlugin(MaiBotPlugin):
             menu_items: List[Dict] = []
             total_commands = 0
 
-            # 先解析手动命令
-            manual: Dict[str, List[Tuple[str, str]]] = {}
+            # 合并 config.toml 手动命令 + commands.json 自定义命令
+            custom = _load_custom_commands()
             for line in self.config.menu.manual_commands:
                 line = str(line).strip()
                 if not line:
@@ -241,7 +353,9 @@ class MenuPlugin(MaiBotPlugin):
                     name = parts[0].strip()
                     cmd = parts[1].strip()
                     desc = parts[2].strip() if len(parts) > 2 else ""
-                    manual.setdefault(name, []).append((cmd, desc))
+                    custom.setdefault(name, []).append((cmd, desc))
+
+            manual = custom  # 合并后统一使用
 
             for pid, pinfo in sorted(all_plugins.items()):
                 if not isinstance(pinfo, dict):
