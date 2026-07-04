@@ -49,7 +49,6 @@ def _extract_commands_from_config(plugin_id: str) -> List[Tuple[str, str]]:
     """尝试从插件的 config.toml 中提取命令前缀（用于 @HookHandler 型插件）。"""
     try:
         plugins_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        # 插件目录名: plugin_id 中的点号替换为下划线或其他格式
         for entry in os.listdir(plugins_dir):
             entry_path = os.path.join(plugins_dir, entry)
             if not os.path.isdir(entry_path):
@@ -74,7 +73,6 @@ def _extract_commands_from_config(plugin_id: str) -> List[Tuple[str, str]]:
             except Exception:
                 return []
             result = []
-            # 递归搜索列表类型字段中含 "/" 的值，作为命令
             def _find_commands(obj: Any, section: str = ""):
                 if isinstance(obj, dict):
                     for k, v in obj.items():
@@ -87,6 +85,44 @@ def _extract_commands_from_config(plugin_id: str) -> List[Tuple[str, str]]:
             return result
     except Exception:
         return []
+
+
+_MANIFEST_CACHE: Dict[str, Dict] = {}
+
+def _read_manifest(plugin_id: str) -> Dict:
+    """读取插件 _manifest.json，返回 {name, description}，有缓存"""
+    if plugin_id in _MANIFEST_CACHE:
+        return _MANIFEST_CACHE[plugin_id]
+    try:
+        plugins_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        for entry in os.listdir(plugins_dir):
+            entry_path = os.path.join(plugins_dir, entry)
+            if not os.path.isdir(entry_path):
+                continue
+            manifest_path = os.path.join(entry_path, "_manifest.json")
+            if not os.path.exists(manifest_path):
+                continue
+            try:
+                with open(manifest_path, "r", encoding="utf-8") as f:
+                    m = json.loads(f.read())
+                if m.get("id") == plugin_id:
+                    _MANIFEST_CACHE[plugin_id] = {
+                        "name": m.get("name", plugin_id),
+                        "description": m.get("description", ""),
+                    }
+                    return _MANIFEST_CACHE[plugin_id]
+            except Exception:
+                continue
+    except Exception:
+        pass
+    fallback = {"name": plugin_id, "description": ""}
+    _MANIFEST_CACHE[plugin_id] = fallback
+    return fallback
+
+
+_ADAPTER_PLUGINS = {"maibot-team.napcat-adapter", "maibot-team.snowluma-adapter"}
+
+_EXCLUDE_BY_NAME = {"Hello World"}
 
 
 # ==================== 指令 pattern 可读化 ====================
@@ -192,17 +228,24 @@ class MenuPlugin(MaiBotPlugin):
             for pid, pinfo in sorted(all_plugins.items()):
                 if not isinstance(pinfo, dict):
                     continue
-                # 跳过内置和排除的插件
                 if pid.startswith("builtin.") or pid in exclude_ids:
                     continue
-                if not pinfo.get("enabled", True):
+                if pid in _ADAPTER_PLUGINS:
                     continue
+
+                manifest = _read_manifest(pid)
+                display_name = manifest["name"]
+                if any(kw in display_name for kw in _EXCLUDE_BY_NAME):
+                    continue
+                plugin_desc = manifest["description"]
 
                 components = pinfo.get("components", [])
                 if not isinstance(components, list):
-                    continue
+                    components = []
 
                 commands = []
+                seen_cmds = set()
+
                 for comp in components:
                     if not isinstance(comp, dict):
                         continue
@@ -211,43 +254,56 @@ class MenuPlugin(MaiBotPlugin):
                     meta = comp.get("metadata")
                     if not isinstance(meta, dict):
                         continue
-
                     comp_type = comp.get("type", "")
 
                     if comp_type == "TOOL":
-                        # @Command 装饰器注册的命令 → 有 pattern
                         pattern = meta.get("pattern", "")
-                        description = meta.get("description", "")
-                        if not pattern and not description:
+                        desc = meta.get("description", "")
+                        if not pattern and not desc:
                             continue
                         cmd = _simplify_pattern(str(pattern))
-                        desc = str(description or "")
+                        desc = str(desc or "")
                         if not cmd:
                             cmd = desc
-                        commands.append((cmd, desc))
+                        if cmd not in seen_cmds:
+                            seen_cmds.add(cmd)
+                            commands.append((cmd, desc))
+                            total_commands += 1
+
+                # 从盘配置中扫描命令
+                extra = _extract_commands_from_config(pid)
+                for cmd, section in extra:
+                    if cmd not in seen_cmds:
+                        seen_cmds.add(cmd)
+                        commands.append((cmd, section))
                         total_commands += 1
 
-                    elif comp_type == "HOOK_HANDLER":
-                        # @HookHandler 装饰器注册的钩子 → 从描述中提取指令
+                # HOOK_HANDLER 型插件：查描述
+                if not commands:
+                    for comp in components:
+                        if not isinstance(comp, dict):
+                            continue
+                        meta = comp.get("metadata") or {}
                         desc = meta.get("description", "")
-                        hook = meta.get("hook", "")
                         if not desc:
                             continue
-                        # 尝试从插件配置中提取命令前缀
-                        extra = _extract_commands_from_config(pid)
-                        if extra:
-                            commands.extend(extra)
-                            total_commands += len(extra)
-                        elif "命令" in desc or hook == "chat.receive.after_process":
-                            # 钩子描述含"命令"字样，显示为指令入口
-                            commands.append((desc, "由钩子处理"))
-                            total_commands += 1
+                        if comp.get("type") == "HOOK_HANDLER" and comp.get("enabled", True):
+                            if desc not in seen_cmds:
+                                seen_cmds.add(desc)
+                                commands.append((desc, ""))
+                                total_commands += 1
+
+                # 无命插件的用 manifest 描述兜底
+                if not commands and plugin_desc:
+                    note = plugin_desc[:60]
+                    commands.append(("自动运行", note))
 
                 if commands:
                     menu_items.append({
-                        "id": pid,
+                        "name": display_name,
                         "version": pinfo.get("version", ""),
                         "commands": commands,
+                        "desc": plugin_desc[:80] if plugin_desc and not commands else "",
                     })
 
             if not menu_items:
@@ -264,11 +320,11 @@ class MenuPlugin(MaiBotPlugin):
             # 渲染失败，降级为纯文本
             text = "当前可用指令：\n"
             for item in menu_items:
-                text += f"\n【{item['id']} v{item['version']}】\n"
+                text += f"\n【{item['name']} v{item.get('version','')}】\n"
                 for cmd, desc in item["commands"]:
                     text += f"  {cmd}"
                     if desc:
-                        text += f" — {desc}"
+                        text += f"  ——  {desc}"
                     text += "\n"
             await self.ctx.send.text(text, stream_id)
             return True, "菜单文本已发送", True
@@ -283,19 +339,22 @@ class MenuPlugin(MaiBotPlugin):
     def _build_menu_html(self, menu_items: List[Dict], total_commands: int) -> str:
         cards = ""
         for item in menu_items:
-            pid = item["id"]
+            name = item["name"]
             version = item.get("version", "")
+            desc = item.get("desc", "")
             cmds_html = ""
-            for cmd, desc in item["commands"]:
-                desc_part = f'<span class="cmd-desc">{desc}</span>' if desc else ""
+            for cmd, cmd_desc in item["commands"]:
+                desc_part = f'<span class="cmd-desc">{cmd_desc}</span>' if cmd_desc else ""
                 cmds_html += f'<div class="cmd-line"><code class="cmd-text">{cmd}</code>{desc_part}</div>\n'
+
+            desc_line = f'<div class="plugin-desc">{desc}</div>' if desc else ""
 
             cards += f"""
             <div class="plugin-card">
                 <div class="plugin-header">
-                    <span class="plugin-name">{pid}</span>
+                    <span class="plugin-name">{name}</span>
                     <span class="plugin-version">v{version}</span>
-                </div>
+                </div>{desc_line}
                 <div class="plugin-commands">{cmds_html}</div>
             </div>"""
 
@@ -371,6 +430,12 @@ body {{
     display: flex;
     flex-direction: column;
     gap: 6px;
+}}
+.plugin-desc {{
+    font-size: 13px;
+    color: var(--ink-light);
+    margin-bottom: 8px;
+    font-style: italic;
 }}
 .cmd-line {{
     display: flex;
