@@ -179,6 +179,11 @@ class MenuSection(PluginConfigBase):
         description="在菜单中隐藏的这些插件 ID",
         json_schema_extra={"label": "排除插件"},
     )
+    manual_commands: List[str] = Field(
+        default_factory=list,
+        description='手动添加命令，每行格式: 插件名 | 命令 | 描述',
+        json_schema_extra={"label": "手动命令", "hint": "格式: 插件名 | /命令 | 功能描述"},
+    )
 
 
 class MenuConfig(PluginConfigBase):
@@ -225,6 +230,19 @@ class MenuPlugin(MaiBotPlugin):
             menu_items: List[Dict] = []
             total_commands = 0
 
+            # 先解析手动命令
+            manual: Dict[str, List[Tuple[str, str]]] = {}
+            for line in self.config.menu.manual_commands:
+                line = str(line).strip()
+                if not line:
+                    continue
+                parts = line.split("|", 2)
+                if len(parts) >= 2:
+                    name = parts[0].strip()
+                    cmd = parts[1].strip()
+                    desc = parts[2].strip() if len(parts) > 2 else ""
+                    manual.setdefault(name, []).append((cmd, desc))
+
             for pid, pinfo in sorted(all_plugins.items()):
                 if not isinstance(pinfo, dict):
                     continue
@@ -242,6 +260,18 @@ class MenuPlugin(MaiBotPlugin):
                 components = pinfo.get("components", [])
                 if not isinstance(components, list):
                     components = []
+
+                # 优先用手动命令
+                if display_name in manual:
+                    menu_items.append({
+                        "name": display_name,
+                        "version": pinfo.get("version", ""),
+                        "commands": manual[display_name],
+                        "desc": "",
+                    })
+                    total_commands += len(manual[display_name])
+                    # 手动覆盖的插件不再走自动检测
+                    continue
 
                 commands = []
                 seen_cmds = set()
@@ -270,7 +300,6 @@ class MenuPlugin(MaiBotPlugin):
                             commands.append((cmd, desc))
                             total_commands += 1
 
-                # 从盘配置中扫描命令
                 extra = _extract_commands_from_config(pid)
                 for cmd, section in extra:
                     if cmd not in seen_cmds:
@@ -278,7 +307,6 @@ class MenuPlugin(MaiBotPlugin):
                         commands.append((cmd, section))
                         total_commands += 1
 
-                # HOOK_HANDLER 型插件：查描述
                 if not commands:
                     for comp in components:
                         if not isinstance(comp, dict):
@@ -293,18 +321,27 @@ class MenuPlugin(MaiBotPlugin):
                                 commands.append((desc, ""))
                                 total_commands += 1
 
-                # 无命插件的用 manifest 描述兜底
                 if not commands and plugin_desc:
-                    note = plugin_desc[:60]
-                    commands.append(("自动运行", note))
+                    commands.append(("自动运行", plugin_desc[:60]))
 
                 if commands:
                     menu_items.append({
                         "name": display_name,
                         "version": pinfo.get("version", ""),
                         "commands": commands,
-                        "desc": plugin_desc[:80] if plugin_desc and not commands else "",
+                        "desc": "",
                     })
+
+            # 手动命令里提到的、但运行时没检测到的插件也加上
+            for name, cmds in sorted(manual.items()):
+                if not any(item["name"] == name for item in menu_items):
+                    menu_items.append({
+                        "name": name,
+                        "version": "",
+                        "commands": cmds,
+                        "desc": "",
+                    })
+                    total_commands += len(cmds)
 
             if not menu_items:
                 await self.ctx.send.text("目前还没有可用的指令哦~", stream_id)
