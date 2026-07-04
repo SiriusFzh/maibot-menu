@@ -3,6 +3,7 @@
 """
 
 import base64
+import json
 import os
 import re
 from typing import Any, Dict, List, Optional, Tuple
@@ -43,6 +44,50 @@ def _build_font_face_css() -> str:
 
 
 _FONT_FACE_CSS = _build_font_face_css()
+
+def _extract_commands_from_config(plugin_id: str) -> List[Tuple[str, str]]:
+    """尝试从插件的 config.toml 中提取命令前缀（用于 @HookHandler 型插件）。"""
+    try:
+        plugins_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        # 插件目录名: plugin_id 中的点号替换为下划线或其他格式
+        for entry in os.listdir(plugins_dir):
+            entry_path = os.path.join(plugins_dir, entry)
+            if not os.path.isdir(entry_path):
+                continue
+            manifest_path = os.path.join(entry_path, "_manifest.json")
+            if not os.path.exists(manifest_path):
+                continue
+            try:
+                with open(manifest_path, "r", encoding="utf-8") as f:
+                    manifest = json.loads(f.read())
+                if manifest.get("id") != plugin_id:
+                    continue
+            except Exception:
+                continue
+            config_path = os.path.join(entry_path, "config.toml")
+            if not os.path.exists(config_path):
+                return []
+            try:
+                import tomlkit
+                with open(config_path, "r", encoding="utf-8") as f:
+                    raw = tomlkit.load(f).unwrap()
+            except Exception:
+                return []
+            result = []
+            # 递归搜索列表类型字段中含 "/" 的值，作为命令
+            def _find_commands(obj: Any, section: str = ""):
+                if isinstance(obj, dict):
+                    for k, v in obj.items():
+                        _find_commands(v, k)
+                elif isinstance(obj, list):
+                    for item in obj:
+                        if isinstance(item, str) and item.startswith("/"):
+                            result.append((item, section))
+            _find_commands(raw)
+            return result
+    except Exception:
+        return []
+
 
 # ==================== 指令 pattern 可读化 ====================
 
@@ -161,25 +206,42 @@ class MenuPlugin(MaiBotPlugin):
                 for comp in components:
                     if not isinstance(comp, dict):
                         continue
-                    # 只取 TOOL 类型的命令组件
-                    if comp.get("type") != "TOOL" or not comp.get("enabled", True):
+                    if not comp.get("enabled", True):
                         continue
                     meta = comp.get("metadata")
                     if not isinstance(meta, dict):
                         continue
-                    pattern = meta.get("pattern", "")
-                    description = meta.get("description", "")
-                    if not pattern and not description:
-                        continue
 
-                    cmd = _simplify_pattern(str(pattern))
-                    desc = str(description or "")
-                    if not cmd and not desc:
-                        continue
-                    if not cmd:
-                        cmd = desc  # 没 pattern 就用描述当指令名
-                    commands.append((cmd, desc))
-                    total_commands += 1
+                    comp_type = comp.get("type", "")
+
+                    if comp_type == "TOOL":
+                        # @Command 装饰器注册的命令 → 有 pattern
+                        pattern = meta.get("pattern", "")
+                        description = meta.get("description", "")
+                        if not pattern and not description:
+                            continue
+                        cmd = _simplify_pattern(str(pattern))
+                        desc = str(description or "")
+                        if not cmd:
+                            cmd = desc
+                        commands.append((cmd, desc))
+                        total_commands += 1
+
+                    elif comp_type == "HOOK_HANDLER":
+                        # @HookHandler 装饰器注册的钩子 → 从描述中提取指令
+                        desc = meta.get("description", "")
+                        hook = meta.get("hook", "")
+                        if not desc:
+                            continue
+                        # 尝试从插件配置中提取命令前缀
+                        extra = _extract_commands_from_config(pid)
+                        if extra:
+                            commands.extend(extra)
+                            total_commands += len(extra)
+                        elif "命令" in desc or hook == "chat.receive.after_process":
+                            # 钩子描述含"命令"字样，显示为指令入口
+                            commands.append((desc, "由钩子处理"))
+                            total_commands += 1
 
                 if commands:
                     menu_items.append({
