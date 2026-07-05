@@ -129,19 +129,23 @@ _DATA_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "commands.
 
 
 def _load_custom_commands() -> Dict[str, List[Tuple[str, str]]]:
-    """从 commands.json 加载自定义命令"""
+    """从 commands.json 加载自定义命令
+    格式: {"功能名": {"items": [{"command": "...", "desc": "..."}]}}
+    """
     try:
         if os.path.exists(_DATA_FILE):
             with open(_DATA_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
             result = {}
-            for name, cmds in data.items():
+            for name, obj in data.items():
+                items = obj.get("items", []) if isinstance(obj, dict) else []
                 result[name] = []
-                for c in cmds:
-                    if isinstance(c, list) and len(c) >= 2:
-                        result[name].append((c[0], c[1]))
-                    elif isinstance(c, list) and len(c) == 1:
-                        result[name].append((c[0], ""))
+                for item in items:
+                    if isinstance(item, dict):
+                        cmd = item.get("command", "")
+                        desc = item.get("desc", "")
+                        if cmd:
+                            result[name].append((cmd, desc))
             return result
     except Exception:
         pass
@@ -149,16 +153,21 @@ def _load_custom_commands() -> Dict[str, List[Tuple[str, str]]]:
 
 
 def _save_custom_commands(data: Dict[str, List[Tuple[str, str]]]) -> None:
-    """保存自定义命令到 commands.json"""
+    """保存到 commands.json
+    格式: {"功能名": {"functionName": "功能名", "items": [{"command": "...", "desc": "..."}]}}
+    """
     out = {}
     for name, cmds in data.items():
-        out[name] = [[c[0], c[1]] for c in cmds]
+        out[name] = {
+            "functionName": name,
+            "items": [{"command": c[0], "desc": c[1]} for c in cmds],
+        }
     with open(_DATA_FILE, "w", encoding="utf-8") as f:
         json.dump(out, f, ensure_ascii=False, indent=2)
 
 
 def _features_to_dict(features: List[Any]) -> Dict[str, List[Tuple[str, str]]]:
-    """把配置里的 FeatureItem 列表转成 {name: [(cmd, desc)]} 格式"""
+    """把 FeatureItem 列表转成 {name: [(cmd, desc)]} — 解析 commands 里的「命令 : 描述」格式"""
     result = {}
     for feat in features:
         name = getattr(feat, "name", "") or ""
@@ -166,11 +175,16 @@ def _features_to_dict(features: List[Any]) -> Dict[str, List[Tuple[str, str]]]:
             continue
         cmds = getattr(feat, "commands", []) or []
         result[name] = []
-        for c in cmds:
-            trigger = getattr(c, "trigger", "") or ""
-            desc = getattr(c, "description", "") or ""
-            if trigger:
-                result[name].append((trigger, desc))
+        for line in cmds:
+            line = str(line).strip()
+            if not line:
+                continue
+            # 支持 : 和 ：
+            parts = line.split(":", 1) if ":" in line else line.split("：", 1)
+            cmd = parts[0].strip()
+            desc = parts[1].strip() if len(parts) > 1 else ""
+            if cmd:
+                result[name].append((cmd, desc))
     return result
 
 
@@ -219,25 +233,8 @@ class PluginSection(PluginConfigBase):
                                 json_schema_extra={"label": "配置版本", "disabled": True})
 
 
-class CommandItem(PluginConfigBase):
-    """一条子指令"""
-    __ui_label__ = "指令"
-    __ui_icon__ = "terminal"
-
-    trigger: str = Field(
-        default="",
-        description="命令触发词，例如 /summary",
-        json_schema_extra={"label": "命令"},
-    )
-    description: str = Field(
-        default="",
-        description="这条指令的功能说明",
-        json_schema_extra={"label": "功能描述"},
-    )
-
-
 class FeatureItem(PluginConfigBase):
-    """一个功能分组"""
+    """一个功能分组 — 命令列表用「命令 | 描述」格式，每行一条"""
     __ui_label__ = "功能"
     __ui_icon__ = "package"
 
@@ -246,10 +243,10 @@ class FeatureItem(PluginConfigBase):
         description="功能名称，例如 每日分析",
         json_schema_extra={"label": "功能名称"},
     )
-    commands: List[CommandItem] = Field(
+    commands: List[str] = Field(
         default_factory=list,
-        description="该功能下的所有指令",
-        json_schema_extra={"label": "指令列表"},
+        description='每行格式: /命令 : 功能描述，例如 /summary : 生成群聊总结',
+        json_schema_extra={"label": "指令列表", "hint": "每行格式: /命令 : 描述"},
     )
 
 
@@ -383,127 +380,20 @@ class MenuPlugin(MaiBotPlugin):
         self, stream_id: str = "", group_id: str = "", **kwargs: Any
     ) -> Tuple[bool, str, bool]:
         try:
-            result = await self.ctx.component.get_all_plugins()
-            # SDK 成功时自动解包返回 plugins 字典本身，失败时返回 {"success": False, "error": ...}
-            if isinstance(result, dict) and result.get("success") is False:
-                await self.ctx.send.text("获取插件列表失败了，稍后再试吧~", stream_id)
-                return True, "get_all_plugins 失败", True
-            if not isinstance(result, dict):
-                await self.ctx.send.text("获取插件列表失败了，稍后再试吧~", stream_id)
-                return True, "get_all_plugins 返回异常", True
+            # 只读菜单配置，不做任何全局插件扫描
+            manual = _load_custom_commands()
+            for name, cmds in _features_to_dict(self.config.menu.features).items():
+                manual.setdefault(name, []).extend(cmds)
 
-            all_plugins = result  # 成功时 result 直接就是 plugins 字典
-            exclude_ids = set(str(p) for p in self.config.menu.exclude_plugins)
+            if not manual:
+                await self.ctx.send.text("还没有配置任何功能，去 WebUI 菜单插件配置页添加吧~", stream_id)
+                return True, "无配置", True
 
             menu_items: List[Dict] = []
             total_commands = 0
-
-            # 合并 WebUI 配置 + commands.json 自定义命令
-            custom = _load_custom_commands()
-            for name, cmds in _features_to_dict(self.config.menu.features).items():
-                custom.setdefault(name, []).extend(cmds)
-
-            manual = custom  # 合并后统一使用
-
-            for pid, pinfo in sorted(all_plugins.items()):
-                if not isinstance(pinfo, dict):
-                    continue
-                if pid.startswith("builtin.") or pid in exclude_ids:
-                    continue
-                if pid in _ADAPTER_PLUGINS:
-                    continue
-
-                manifest = _read_manifest(pid)
-                display_name = manifest["name"]
-                if any(kw in display_name for kw in _EXCLUDE_BY_NAME):
-                    continue
-                plugin_desc = manifest["description"]
-
-                components = pinfo.get("components", [])
-                if not isinstance(components, list):
-                    components = []
-
-                # 优先用手动命令
-                if display_name in manual:
-                    menu_items.append({
-                        "name": display_name,
-                        "version": pinfo.get("version", ""),
-                        "commands": manual[display_name],
-                        "desc": "",
-                    })
-                    total_commands += len(manual[display_name])
-                    # 手动覆盖的插件不再走自动检测
-                    continue
-
-                commands = []
-                seen_cmds = set()
-
-                for comp in components:
-                    if not isinstance(comp, dict):
-                        continue
-                    if not comp.get("enabled", True):
-                        continue
-                    meta = comp.get("metadata")
-                    if not isinstance(meta, dict):
-                        continue
-                    comp_type = comp.get("type", "")
-
-                    if comp_type == "TOOL":
-                        pattern = meta.get("pattern", "")
-                        desc = meta.get("description", "")
-                        if not pattern and not desc:
-                            continue
-                        cmd = _simplify_pattern(str(pattern))
-                        desc = str(desc or "")
-                        if not cmd:
-                            cmd = desc
-                        if cmd not in seen_cmds:
-                            seen_cmds.add(cmd)
-                            commands.append((cmd, desc))
-                            total_commands += 1
-
-                extra = _extract_commands_from_config(pid)
-                for cmd, section in extra:
-                    if cmd not in seen_cmds:
-                        seen_cmds.add(cmd)
-                        commands.append((cmd, section))
-                        total_commands += 1
-
-                if not commands:
-                    for comp in components:
-                        if not isinstance(comp, dict):
-                            continue
-                        meta = comp.get("metadata") or {}
-                        desc = meta.get("description", "")
-                        if not desc:
-                            continue
-                        if comp.get("type") == "HOOK_HANDLER" and comp.get("enabled", True):
-                            if desc not in seen_cmds:
-                                seen_cmds.add(desc)
-                                commands.append((desc, ""))
-                                total_commands += 1
-
-                if not commands and plugin_desc:
-                    commands.append(("自动运行", plugin_desc[:60]))
-
-                if commands:
-                    menu_items.append({
-                        "name": display_name,
-                        "version": pinfo.get("version", ""),
-                        "commands": commands,
-                        "desc": "",
-                    })
-
-            # 手动命令里提到的、但运行时没检测到的插件也加上
             for name, cmds in sorted(manual.items()):
-                if not any(item["name"] == name for item in menu_items):
-                    menu_items.append({
-                        "name": name,
-                        "version": "",
-                        "commands": cmds,
-                        "desc": "",
-                    })
-                    total_commands += len(cmds)
+                menu_items.append({"name": name, "version": "", "commands": cmds, "desc": ""})
+                total_commands += len(cmds)
 
             if not menu_items:
                 await self.ctx.send.text("目前还没有可用的指令哦~", stream_id)

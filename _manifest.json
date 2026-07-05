@@ -26,7 +26,6 @@
   "capabilities": [
     "send.image",
     "send.text",
-    "component.get_all_plugins",
     "render.html2png"
   ],
   "i18n": {

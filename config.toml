@@ -7,56 +7,57 @@ exclude_plugins = ["builtin.plugin-management"]
 
 [[menu.features]]
 name = "每日分析"
-
-[[menu.features.commands]]
-trigger = "/summary [今天|昨天]"
-description = "生成群聊总结图片"
-
-[[menu.features.commands]]
-trigger = "/mysummary [今天|昨天]"
-description = "生成个人总结图片"
-
-[[menu.features.commands]]
-trigger = "/mysummary @某人"
-description = "查看他人个人总结（需权限）"
+commands = [
+    "/summary：查看今天的群聊总结",
+    "/summary 昨天：查看昨天的群聊总结",
+    "/mysummary：查看自己今天的个人总结",
+    "/mysummary 昨天： 查看自己昨天的个人总结",
+    "/mysummary @某人：查看他人今天的个人总结（需要权限）",
+    "/mysummary @某人 昨天：查看他人昨天的个人总结",
+    "/mysummary QQ号：通过 QQ 号查看他人总结（需要权限）",
+]
 
 [[menu.features]]
 name = "每日60秒新闻"
-
-[[menu.features.commands]]
-trigger = "/get_news [image|text]"
-description = "获取每日新闻"
-
-[[menu.features.commands]]
-trigger = "/news"
-description = "同 /get_news"
-
-[[menu.features.commands]]
-trigger = "/每日新闻"
-description = "同 /get_news"
-
-[[menu.features.commands]]
-trigger = "/news_status"
-description = "查看下次推送时间"
-
-[[menu.features.commands]]
-trigger = "/push_news"
-description = "管理员推送到配置群"
+commands = [
+    "/news： 获取每日新闻",
+    "/每日新闻：获取每日新闻",
+    "/get_news：获取每日新闻",
+    "/get_news text：只发文字",
+]
 
 [[menu.features]]
 name = "群友语录"
-
-[[menu.features.commands]]
-trigger = "/投稿"
-description = "回复图片投稿到群语录库"
-
-[[menu.features.commands]]
-trigger = "/群友语录"
-description = "随机获取一条语录"
+commands = [
+    "/投稿：回复图片投稿到群语录库（表情包没用！）",
+    "/群友语录：随机获取一条语录",
+]
 
 [[menu.features]]
-name = "菜单插件"
+name = "麦麦贴表情"
+commands = [
+    "麦麦给我贴一个表情",
+    "麦麦会主动贴表情（概率低），也可以通过上文让他贴",
+]
 
-[[menu.features.commands]]
-trigger = "/菜单"
-description = "显示所有功能和指令"
+[[menu.features]]
+name = "麦麦空间"
+commands = [
+    "麦麦会不定时浏览空间",
+    "自动点赞",
+    "自动评论（概率）",
+]
+
+[[menu.features]]
+name = "智能戳一戳"
+commands = [
+    "会主动戳人",
+    "被戳，会戳回去，有概率触发狂戳（3次）",
+]
+
+[[menu.features]]
+name = "麦麦禁言"
+commands = [
+    "麦麦闭嘴、雪豹闭嘴、Mute True：禁言5分钟",
+    "麦麦说话、Mute Flase:解除禁言",
+]
