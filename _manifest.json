@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "id": "maibot.menu",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "plugin_type": "tool",
   "name": "菜单插件",
   "description": "发送 /菜单 生成菜单图片，展示手动配置的功能分组和指令，渲染失败时降级为文本。",
