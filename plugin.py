@@ -2,139 +2,22 @@
 菜单插件 — 发送 /菜单 即可查看麦麦的所有功能和指令
 """
 
-import base64
 import json
-import os
-import re
+from html import escape
+from pathlib import Path
+import shutil
 from typing import Any, Dict, List, Optional, Tuple
 
 from maibot_sdk import Command, Field, MaiBotPlugin, PluginConfigBase
 
 
-# ==================== 字体加载 ====================
-
-_FONTS_DIR = os.path.join(os.path.dirname(
-    os.path.dirname(os.path.abspath(__file__))
-), "khiqwq_daily_analysis", "fonts")
-
-_FONT_FACE_CSS = ""
-
-
-def _build_font_face_css() -> str:
-    bundled = [
-        ("ZCOOL KuaiLe", "ZCOOLKuaiLe-Regular.woff2"),
-        ("Patrick Hand", "PatrickHand-Regular.woff2"),
-    ]
-    faces = []
-    for family, filename in bundled:
-        path = os.path.join(_FONTS_DIR, filename)
-        try:
-            with open(path, "rb") as f:
-                b64 = base64.b64encode(f.read()).decode("utf-8")
-            faces.append(
-                f"@font-face{{font-family:'{family}';"
-                f"src:url(data:font/woff2;base64,{b64}) format('woff2');"
-                f"font-weight:normal;font-style:normal;font-display:swap;}}"
-            )
-        except Exception:
-            pass
-    if not faces:
-        return ""
-    return "<style>" + "".join(faces) + "</style>"
-
-
-_FONT_FACE_CSS = _build_font_face_css()
-
-def _extract_commands_from_config(plugin_id: str) -> List[Tuple[str, str]]:
-    """尝试从插件的 config.toml 中提取命令前缀（用于 @HookHandler 型插件）。"""
-    try:
-        plugins_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        for entry in os.listdir(plugins_dir):
-            entry_path = os.path.join(plugins_dir, entry)
-            if not os.path.isdir(entry_path):
-                continue
-            manifest_path = os.path.join(entry_path, "_manifest.json")
-            if not os.path.exists(manifest_path):
-                continue
-            try:
-                with open(manifest_path, "r", encoding="utf-8") as f:
-                    manifest = json.loads(f.read())
-                if manifest.get("id") != plugin_id:
-                    continue
-            except Exception:
-                continue
-            config_path = os.path.join(entry_path, "config.toml")
-            if not os.path.exists(config_path):
-                return []
-            try:
-                import tomlkit
-                with open(config_path, "r", encoding="utf-8") as f:
-                    raw = tomlkit.load(f).unwrap()
-            except Exception:
-                return []
-            result = []
-            def _find_commands(obj: Any, section: str = ""):
-                if isinstance(obj, dict):
-                    for k, v in obj.items():
-                        _find_commands(v, k)
-                elif isinstance(obj, list):
-                    for item in obj:
-                        if isinstance(item, str) and item.startswith("/"):
-                            result.append((item, section))
-            _find_commands(raw)
-            return result
-    except Exception:
-        return []
-
-
-_MANIFEST_CACHE: Dict[str, Dict] = {}
-
-def _read_manifest(plugin_id: str) -> Dict:
-    """读取插件 _manifest.json，返回 {name, description}，有缓存"""
-    if plugin_id in _MANIFEST_CACHE:
-        return _MANIFEST_CACHE[plugin_id]
-    try:
-        plugins_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        for entry in os.listdir(plugins_dir):
-            entry_path = os.path.join(plugins_dir, entry)
-            if not os.path.isdir(entry_path):
-                continue
-            manifest_path = os.path.join(entry_path, "_manifest.json")
-            if not os.path.exists(manifest_path):
-                continue
-            try:
-                with open(manifest_path, "r", encoding="utf-8") as f:
-                    m = json.loads(f.read())
-                if m.get("id") == plugin_id:
-                    _MANIFEST_CACHE[plugin_id] = {
-                        "name": m.get("name", plugin_id),
-                        "description": m.get("description", ""),
-                    }
-                    return _MANIFEST_CACHE[plugin_id]
-            except Exception:
-                continue
-    except Exception:
-        pass
-    fallback = {"name": plugin_id, "description": ""}
-    _MANIFEST_CACHE[plugin_id] = fallback
-    return fallback
-
-
-_ADAPTER_PLUGINS = {"maibot-team.napcat-adapter", "maibot-team.snowluma-adapter"}
-
-_EXCLUDE_BY_NAME = {"Hello World"}
-
-
-_DATA_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "commands.json")
-
-
-def _load_custom_commands() -> Dict[str, List[Tuple[str, str]]]:
+def _load_custom_commands(data_file: Path) -> Dict[str, List[Tuple[str, str]]]:
     """从 commands.json 加载自定义命令
     格式: {"功能名": {"items": [{"command": "...", "desc": "..."}]}}
     """
     try:
-        if os.path.exists(_DATA_FILE):
-            with open(_DATA_FILE, "r", encoding="utf-8") as f:
+        if data_file.exists():
+            with open(data_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
             result = {}
             for name, obj in data.items():
@@ -152,7 +35,7 @@ def _load_custom_commands() -> Dict[str, List[Tuple[str, str]]]:
     return {}
 
 
-def _save_custom_commands(data: Dict[str, List[Tuple[str, str]]]) -> None:
+def _save_custom_commands(data_file: Path, data: Dict[str, List[Tuple[str, str]]]) -> None:
     """保存到 commands.json
     格式: {"功能名": {"functionName": "功能名", "items": [{"command": "...", "desc": "..."}]}}
     """
@@ -162,7 +45,7 @@ def _save_custom_commands(data: Dict[str, List[Tuple[str, str]]]) -> None:
             "functionName": name,
             "items": [{"command": c[0], "desc": c[1]} for c in cmds],
         }
-    with open(_DATA_FILE, "w", encoding="utf-8") as f:
+    with open(data_file, "w", encoding="utf-8") as f:
         json.dump(out, f, ensure_ascii=False, indent=2)
 
 
@@ -186,38 +69,6 @@ def _features_to_dict(features: List[Any]) -> Dict[str, List[Tuple[str, str]]]:
             if cmd:
                 result[name].append((cmd, desc))
     return result
-
-
-# ==================== 指令 pattern 可读化 ====================
-
-
-def _simplify_pattern(pattern: str) -> str:
-    """把正则 pattern 转成人类可读的指令格式。
-
-    ^/summary  ->  /summary [参数]
-    ^/菜单     ->  /菜单
-    """
-    if not pattern:
-        return ""
-    s = pattern.strip()
-    # 去头尾锚点
-    if s.startswith("^"):
-        s = s[1:]
-    if s.endswith("$"):
-        s = s[:-1]
-    # 去掉命名捕获组，替换为 [参数]
-    s = re.sub(r"\(\?P<\w+>.*?\)", "[参数]", s)
-    # 去掉非捕获组标记
-    s = s.replace("(?:", "(")
-    # 去掉 ? 量词
-    s = re.sub(r"\)\?", "]", s)
-    # 清理残留正则语法
-    s = s.replace("\\s+", " ")
-    s = s.replace("\\s", " ")
-    s = re.sub(r"\\.", "", s)  # 去掉剩余转义
-    s = re.sub(r"[()[\]{}|]", "", s)  # 去括号
-    s = re.sub(r"\s+", " ", s).strip()
-    return s
 
 
 # ==================== 配置模型 ====================
@@ -279,6 +130,13 @@ class MenuPlugin(MaiBotPlugin):
     config_model = MenuConfig
 
     async def on_load(self) -> None:
+        data_dir = Path(self.ctx.paths.data_dir)
+        data_dir.mkdir(parents=True, exist_ok=True)
+        self._commands_path = data_dir / "commands.json"
+        legacy_file = Path(__file__).parent / "commands.json"
+        if not self._commands_path.exists() and legacy_file.is_file():
+            shutil.copy2(legacy_file, self._commands_path)
+            self.ctx.logger.info("已迁移旧版菜单数据到持久化目录")
         self.ctx.logger.info("菜单插件已加载")
 
     async def on_unload(self) -> None:
@@ -298,12 +156,12 @@ class MenuPlugin(MaiBotPlugin):
         if not args:
             await self.ctx.send.text("用法: /菜单添加 功能名", stream_id)
             return True, "无参数", True
-        data = _load_custom_commands()
+        data = _load_custom_commands(self._commands_path)
         if args in data:
             await self.ctx.send.text(f"功能【{args}】已存在，用 /菜单指令 添加指令吧", stream_id)
             return True, "已存在", True
         data[args] = []
-        _save_custom_commands(data)
+        _save_custom_commands(self._commands_path, data)
         await self.ctx.send.text(f"已添加功能【{args}】，用 /菜单指令 给它添加指令吧", stream_id)
         return True, f"已添加 {args}", True
 
@@ -320,12 +178,12 @@ class MenuPlugin(MaiBotPlugin):
         name = parts[0]
         cmd = parts[1]
         desc = parts[2] if len(parts) > 2 else ""
-        data = _load_custom_commands()
+        data = _load_custom_commands(self._commands_path)
         if name not in data:
             await self.ctx.send.text(f"功能【{name}】不存在，先用 /菜单添加 创建", stream_id)
             return True, "功能不存在", True
         data[name].append((cmd, desc))
-        _save_custom_commands(data)
+        _save_custom_commands(self._commands_path, data)
         info = f"{cmd} {'— ' + desc if desc else ''}"
         await self.ctx.send.text(f"已添加: 【{name}】{info}", stream_id)
         return True, f"添加成功 {cmd}", True
@@ -339,12 +197,12 @@ class MenuPlugin(MaiBotPlugin):
         if not args:
             await self.ctx.send.text("用法: /菜单删除 功能名", stream_id)
             return True, "无参数", True
-        data = _load_custom_commands()
+        data = _load_custom_commands(self._commands_path)
         if args not in data:
             await self.ctx.send.text(f"功能【{args}】不存在", stream_id)
             return True, "不存在", True
         del data[args]
-        _save_custom_commands(data)
+        _save_custom_commands(self._commands_path, data)
         await self.ctx.send.text(f"已删除功能【{args}】及其所有指令", stream_id)
         return True, f"已删除 {args}", True
 
@@ -360,7 +218,7 @@ class MenuPlugin(MaiBotPlugin):
             return True, "参数不足", True
         name = parts[0]
         target = parts[1]
-        data = _load_custom_commands()
+        data = _load_custom_commands(self._commands_path)
         if name not in data:
             await self.ctx.send.text(f"功能【{name}】不存在", stream_id)
             return True, "不存在", True
@@ -369,7 +227,7 @@ class MenuPlugin(MaiBotPlugin):
         if len(data[name]) == before:
             await self.ctx.send.text(f"未找到指令【{target}】", stream_id)
             return True, "未找到", True
-        _save_custom_commands(data)
+        _save_custom_commands(self._commands_path, data)
         await self.ctx.send.text(f"已从【{name}】中删除指令【{target}】", stream_id)
         return True, f"已删除 {target}", True
 
@@ -381,7 +239,7 @@ class MenuPlugin(MaiBotPlugin):
     ) -> Tuple[bool, str, bool]:
         try:
             # 只读菜单配置，不做任何全局插件扫描
-            manual = _load_custom_commands()
+            manual = _load_custom_commands(self._commands_path)
             for name, cmds in _features_to_dict(self.config.menu.features).items():
                 manual.setdefault(name, []).extend(cmds)
 
@@ -428,11 +286,13 @@ class MenuPlugin(MaiBotPlugin):
     def _build_menu_html(self, menu_items: List[Dict], total_commands: int) -> str:
         cards = ""
         for item in menu_items:
-            name = item["name"]
-            version = item.get("version", "")
-            desc = item.get("desc", "")
+            name = escape(str(item["name"]))
+            version = escape(str(item.get("version", "")))
+            desc = escape(str(item.get("desc", "")))
             cmds_html = ""
             for cmd, cmd_desc in item["commands"]:
+                cmd = escape(str(cmd))
+                cmd_desc = escape(str(cmd_desc))
                 desc_part = f'<span class="cmd-desc">{cmd_desc}</span>' if cmd_desc else ""
                 cmds_html += f'<div class="cmd-line"><code class="cmd-text">{cmd}</code>{desc_part}</div>\n'
 
@@ -449,7 +309,7 @@ class MenuPlugin(MaiBotPlugin):
 
         return f"""<!DOCTYPE html>
 <html lang="zh-CN">
-<head><meta charset="UTF-8">{_FONT_FACE_CSS if _FONT_FACE_CSS else ""}<style>
+<head><meta charset="UTF-8"><style>
 :root {{
     --bg: #fdfbf7;
     --card-bg: #fff;
@@ -458,9 +318,9 @@ class MenuPlugin(MaiBotPlugin):
     --accent: #ff7043;
     --tag-bg: #fff3e0;
     --border: #e0d8cc;
-    --font-title: 'ZCOOL KuaiLe', 'Microsoft YaHei', 'PingFang SC', sans-serif;
+    --font-title: 'Microsoft YaHei', 'PingFang SC', sans-serif;
     --font-body: 'Microsoft YaHei', 'PingFang SC', sans-serif;
-    --font-hand: 'Patrick Hand', 'KaiTi', 'Microsoft YaHei', cursive;
+    --font-hand: 'KaiTi', 'Microsoft YaHei', cursive;
 }}
 * {{ margin:0; padding:0; box-sizing:border-box; }}
 body {{
