@@ -12,7 +12,7 @@
 
 ## 安装
 
-在 MaiBot WebUI 插件市场搜索 `maibot.menu` 安装，或手动将本仓库克隆到 `plugins/` 目录。
+手动将本仓库克隆到 MaiBot 的 `plugins/` 目录，然后在 WebUI 插件管理页面启用。官方插件市场收录后，也可搜索 `maibot.menu` 安装。
 
 ## 使用
 
