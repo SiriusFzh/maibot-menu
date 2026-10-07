@@ -1,10 +1,10 @@
 {
   "manifest_version": 2,
   "id": "maibot.menu",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "plugin_type": "tool",
   "name": "菜单插件",
-  "description": "发送 /菜单 即可生成一张菜单图片，列出当前麦麦所有可用功能和指令。",
+  "description": "发送 /菜单 生成菜单图片，展示手动配置的功能分组和指令，渲染失败时降级为文本。",
   "author": {
     "name": "SiriusFzh",
     "url": "https://github.com/SiriusFzh"
@@ -30,6 +30,8 @@
   ],
   "i18n": {
     "default_locale": "zh-CN",
-    "supported_locales": ["zh-CN"]
+    "supported_locales": [
+      "zh-CN"
+    ]
   }
 }
