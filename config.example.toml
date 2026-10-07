@@ -3,6 +3,7 @@ enabled = true
 config_version = "1.0.0"
 
 [menu]
+admin_users = []
 exclude_plugins = ["builtin.plugin-management"]
 
 [[menu.features]]
@@ -61,3 +62,4 @@ commands = [
     "麦麦闭嘴、雪豹闭嘴、Mute True：禁言5分钟",
     "麦麦说话、Mute Flase:解除禁言",
 ]
+
